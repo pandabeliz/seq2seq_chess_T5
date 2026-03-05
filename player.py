@@ -4,8 +4,9 @@ import random
 from typing import Optional
 from transformers import T5TokenizerFast, T5ForConditionalGeneration
 
-# Assumes Player base class is imported from your assignment environment
-# from player import Player
+from chess_tournament import (
+    Player
+    )
 
 
 class TransformerPlayer(Player):
