@@ -1,0 +1,8 @@
+# TransformerPlayer v4 - Core Dependencies
+python-chess
+torch
+transformers
+
+# Implicit Dependencies (required for efficient model loading/inference)
+accelerate
+bitsandbytes
