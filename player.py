@@ -1,18 +1,19 @@
+!git clone https://github.com/bylinina/chess_exam.git
+%cd /content/chess_exam
+!pip install -e .
+
 import chess
 import torch
 import random
 from typing import Optional
 from transformers import T5TokenizerFast, T5ForConditionalGeneration
 
-from chess_tournament import (
-    Player
-    )
+from chess_tournament import Player
 
 
 class TransformerPlayer(Player):
     def __init__(self, name: str, model_path: str = "belpekkan/chess_T5_seq2seq"):
         #v4
-        # model_path now has a default value -> satisfies the assignment requirement:
         # TransformerPlayer("Student") works without any extra arguments
         super().__init__(name)
         self.tokenizer = T5TokenizerFast.from_pretrained(model_path)
@@ -21,25 +22,12 @@ class TransformerPlayer(Player):
         self.device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
 
-        # --- Repetition penalty: persistent position history ---
+        # keep track of positions we've already been in to avoid repeating
         self._seen_positions: set = set()
 
-    # ===================================================================
-    # OVERRIDE 1 — Checkmate (2-ply)
-    #
-    # Phase 1 (mate-in-1): Check every legal move. If any delivers
-    # immediate checkmate, return it instantly.
-    #
-    # Phase 2 (mate-in-2): For each candidate move, check whether
-    # EVERY legal opponent reply allows us a checkmate-in-1 on the
-    # next turn. If yes, that move forces mate in 2 — play it.
-    #
-    # Cost: O(our_moves × opponent_moves) board pushes.
-    # In a lone-king endgame the opponent has ≤ 8 moves, so this is
-    # effectively free compared to the T5 forward pass.
-    # ===================================================================
+    # OVERRIDE 1 - CHECKS FOR 2 MOVE CHECKMATES
     def _find_checkmate(self, board: chess.Board) -> Optional[chess.Move]:
-        # ---- Phase 1: mate-in-1 ----------------------------------------
+        # check if model can checkmate in 1
         for move in board.legal_moves:
             board.push(move)
             if board.is_checkmate():
@@ -47,19 +35,17 @@ class TransformerPlayer(Player):
                 return move
             board.pop()
 
-        # ---- Phase 2: mate-in-2 ----------------------------------------
+        # check if model can force checkmate in 2
         for move in board.legal_moves:
             board.push(move)
 
-            # Skip stalemate — never hand the opponent a stalemate escape
+            # skip stalemate
             if board.is_stalemate():
                 board.pop()
                 continue
 
             opponent_moves = list(board.legal_moves)
 
-            # If the opponent has no moves and it's not checkmate, it's
-            # stalemate — already filtered above, but guard here too.
             if not opponent_moves:
                 board.pop()
                 continue
@@ -68,7 +54,7 @@ class TransformerPlayer(Player):
             for opp_move in opponent_moves:
                 board.push(opp_move)
 
-                # Check whether we have a mate-in-1 from this position
+                # check whether model can have a mate-in-1 from this position
                 we_have_mate = False
                 for our_reply in board.legal_moves:
                     board.push(our_reply)
@@ -91,20 +77,17 @@ class TransformerPlayer(Player):
 
         return None
 
-    # ===================================================================
-    # OVERRIDE 2 — Promotion
-    # If any legal move is a pawn promotion, always promote to queen.
-    # If multiple promotion squares exist, prefer the one that gives check
-    # (most aggressive), otherwise just return the first one found.
-    # ===================================================================
+    # OVERRIDE 2 — PROMOTION
+    
     def _find_promotion(self, board: chess.Board) -> Optional[chess.Move]:
+        # collect all queen promotions
         promotions = [
             m for m in board.legal_moves
             if m.promotion == chess.QUEEN
         ]
         if not promotions:
             return None
-        # Prefer a promotion that also gives check
+        # prefer a promotion that also gives check
         for move in promotions:
             board.push(move)
             gives_check = board.is_check()
@@ -113,50 +96,29 @@ class TransformerPlayer(Player):
                 return move
         return promotions[0]
 
-    # ===================================================================
-    # OVERRIDE 3 — Winning position: prefer captures and checks
-    # When our material advantage exceeds WINNING_ADVANTAGE_CP, restrict
-    # the moves offered to the model to only:
-    #   (a) moves that give check, OR
-    #   (b) moves that capture material
-    # This prevents aimless repositioning when we are clearly winning.
-    # Falls back to all moves if no such moves exist (very rare endgames).
-    # ===================================================================
-
-    # ------------------------------------------------------------------
-    # Material values used for Override 3 (winning position detection).
-    # Standard centipawn values — only piece type matters, not colour.
-    # ------------------------------------------------------------------
-    PIECE_VALUES = {
-        chess.PAWN:   100,
-        chess.KNIGHT: 320,
-        chess.BISHOP: 330,
-        chess.ROOK:   500,
-        chess.QUEEN:  900,
-        chess.KING:     0,   # never counted in material sums
-    }
-
-    # Centipawn advantage threshold above which Override 3 activates.
-    # 400cp ≈ roughly a rook up — clearly winning territory.
-    WINNING_ADVANTAGE_CP = 400
-
-
+    # OVERRIDE 3 — WINNING POSITIONS: prefer captures and checks
+    
     def _material_balance(self, board: chess.Board) -> int:
-        """
-        Returns material balance in centipawns from the perspective of the
-        side to move (positive = we are winning, negative = we are losing).
-        """
+        # rough centipawn count from our perspective
+        piece_values = {
+            chess.PAWN: 100,
+            chess.KNIGHT: 320,
+            chess.BISHOP: 330,
+            chess.ROOK: 500,
+            chess.QUEEN: 900,
+            chess.KING: 0,
+        }
         score = 0
         for piece_type, value in self.PIECE_VALUES.items():
             score += value * len(board.pieces(piece_type, board.turn))
             score -= value * len(board.pieces(piece_type, not board.turn))
         return score
 
-    def _filter_winning_moves(
-        self, board: chess.Board, moves: list
-    ) -> list:
-        if self._material_balance(board) < self.WINNING_ADVANTAGE_CP:
-            return moves  # not clearly winning — don't filter
+    def _filter_winning_moves(self, board: chess.Board, moves: list) -> list:
+        # if we're up by about a rook or more, only show the model
+        # captures and checks so it doesn't just shuffle pieces around
+        if self._material_balance(board) < 400:
+            return moves  
 
         aggressive = []
         for move in moves:
@@ -169,24 +131,11 @@ class TransformerPlayer(Player):
 
         return aggressive if aggressive else moves
 
-    # ===================================================================
-    # Repetition penalty helpers
-    # ===================================================================
     def _position_key(self, board: chess.Board) -> str:
-        """
-        Fingerprint of a board position that ignores move counters.
-        Uses the first 4 space-separated fields of the FEN:
-          piece placement / active colour / castling rights / en-passant
-        """
+        # first 4 fields of FEN = position without move counters
         return " ".join(board.fen().split()[:4])
 
-    def _get_non_repeating_moves(
-        self, board: chess.Board, moves: list
-    ) -> list:
-        """
-        Filter out moves that would return the game to a position we have
-        already visited, preventing cycling behaviour.
-        """
+    def _get_non_repeating_moves(self, board: chess.Board, moves: list) -> list:
         non_repeating = []
         for move in moves:
             board.push(move)
@@ -202,62 +151,44 @@ class TransformerPlayer(Player):
         self._seen_positions.add(self._position_key(board))
         board.pop()
 
-    # ===================================================================
-    # get_move — main entry point called by the tournament
-    # ===================================================================
     def get_move(self, fen: str) -> Optional[str]:
         board = chess.Board(fen)
         legal_moves = list(board.legal_moves)
 
-        # ------------------------------------------------------------------
-        # Reset position history at the start of each new game.
-        # Detected by the standard starting FEN or fullmove number == 1.
-        # ------------------------------------------------------------------
+        # reset position history at the start of each new game.
         if fen == chess.STARTING_FEN or board.fullmove_number == 1:
             self._seen_positions = set()
 
-        # Record current position so future moves can avoid returning here
+        # record current position so future moves can avoid returning here
         self._seen_positions.add(self._position_key(board))
 
-        # ==================================================================
-        # OVERRIDE 1: Deliver checkmate immediately if available (2-ply)
-        # ==================================================================
+        # take the checkmate if it's there
         mate_move = self._find_checkmate(board)
         if mate_move:
             self._record_move(board, mate_move)
             return mate_move.uci()
 
-        # ==================================================================
-        # OVERRIDE 2: Promote to queen immediately if available
-        # ==================================================================
+        # # always promote to queen
         promo_move = self._find_promotion(board)
         if promo_move:
             self._record_move(board, promo_move)
             return promo_move.uci()
 
-        # ------------------------------------------------------------------
-        # Apply repetition filter to the full legal move list
-        # ------------------------------------------------------------------
+        # filter out moves that repeat positions we've already been in
         non_repeating = self._get_non_repeating_moves(board, legal_moves)
         moves_to_offer = non_repeating if non_repeating else legal_moves
 
-        # ==================================================================
-        # OVERRIDE 3: In clearly winning positions, only show the model
-        # aggressive moves (checks + captures) to prevent aimless orbiting
-        # ==================================================================
+        # if we're clearly winning, only show the model aggressive moves
         moves_to_offer = self._filter_winning_moves(board, moves_to_offer)
 
-        # ------------------------------------------------------------------
-        # Build prompt and query the model.
-        # Mirror the training format exactly: "chess: <FEN> legal: e2e4 ..."
-        # ------------------------------------------------------------------
+        # build the prompt in the same format as training
         legal_moves_str = " ".join(m.uci() for m in moves_to_offer)
         input_text = f"chess: {fen} legal: {legal_moves_str}"
 
         inputs = self.tokenizer(
             input_text,
             return_tensors="pt",
-            max_length=256,       # must match training
+            max_length=256,
             truncation=True,
         ).to(self.device)
 
@@ -273,10 +204,7 @@ class TransformerPlayer(Player):
             outputs[0], skip_special_tokens=True
         ).strip()
 
-        # ------------------------------------------------------------------
-        # Validate — the predicted move must be legal on the FULL board
-        # (not just the filtered list) for safety.
-        # ------------------------------------------------------------------
+        # check the predicted move is actually legal before returning it
         try:
             move = chess.Move.from_uci(predicted_move)
             if move in board.legal_moves:
@@ -285,10 +213,7 @@ class TransformerPlayer(Player):
         except Exception:
             pass
 
-        # ------------------------------------------------------------------
-        # Fallback: random move from the non-repeating pool, then full pool.
-        # Avoids returning None and incurring an illegal move penalty.
-        # ------------------------------------------------------------------
+        # fallback to a random non-repeating move if the model failed
         fallback_pool = non_repeating if non_repeating else legal_moves
         fallback = random.choice(fallback_pool)
         self._record_move(board, fallback)
