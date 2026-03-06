@@ -91,21 +91,20 @@ class TransformerPlayer(Player):
         return promotions[0]
 
     # OVERRIDE 3 — WINNING POSITIONS: prefer captures and checks
-    
     def _material_balance(self, board: chess.Board) -> int:
-    piece_values = {
-        chess.PAWN: 100,
-        chess.KNIGHT: 320,
-        chess.BISHOP: 330,
-        chess.ROOK: 500,
-        chess.QUEEN: 900,
-        chess.KING: 0,
-    }
-    score = 0
-    for piece_type, value in piece_values.items():
-        score += value * len(board.pieces(piece_type, board.turn))
-        score -= value * len(board.pieces(piece_type, not board.turn))
-    return score
+        piece_values = {
+            chess.PAWN: 100,
+            chess.KNIGHT: 320,
+            chess.BISHOP: 330,
+            chess.ROOK: 500,
+            chess.QUEEN: 900,
+            chess.KING: 0,
+        }
+        score = 0
+        for piece_type, value in piece_values.items():
+            score += value * len(board.pieces(piece_type, board.turn))
+            score -= value * len(board.pieces(piece_type, not board.turn))
+        return score
 
     def _filter_winning_moves(self, board: chess.Board, moves: list) -> list:
         # if we're up by about a rook or more, only show the model
