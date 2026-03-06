@@ -1,15 +1,9 @@
-!git clone https://github.com/bylinina/chess_exam.git
-%cd /content/chess_exam
-!pip install -e .
-
 import chess
 import torch
 import random
 from typing import Optional
 from transformers import T5TokenizerFast, T5ForConditionalGeneration
-
 from chess_tournament import Player
-
 
 class TransformerPlayer(Player):
     def __init__(self, name: str, model_path: str = "belpekkan/chess_T5_seq2seq"):
