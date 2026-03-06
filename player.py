@@ -197,6 +197,7 @@ class TransformerPlayer(Player):
         predicted_move = self.tokenizer.decode(
             outputs[0], skip_special_tokens=True
         ).strip()
+        print(f"Model predicted: '{predicted_move}'")  # add this
 
         # check the predicted move is actually legal before returning it
         try:
