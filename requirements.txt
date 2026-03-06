@@ -5,4 +5,4 @@ transformers
 
 # Implicit Dependencies (required for efficient model loading/inference)
 accelerate
-bitsandbytes
+sentencepiece
