@@ -138,7 +138,6 @@ class TransformerPlayer(Player):
         return non_repeating
 
     def _record_move(self, board: chess.Board, move: chess.Move) -> None:
-        """Record the position we are moving INTO for future repetition checks."""
         board.push(move)
         self._seen_positions.add(self._position_key(board))
         board.pop()
@@ -160,7 +159,7 @@ class TransformerPlayer(Player):
             self._record_move(board, mate_move)
             return mate_move.uci()
 
-        # # always promote to queen
+        # always promote to queen
         promo_move = self._find_promotion(board)
         if promo_move:
             self._record_move(board, promo_move)
